@@ -2949,6 +2949,12 @@ func GetCustomToolNames() []string {
 func GetToolCommand(toolName string) string {
 	config, _ := LoadUserConfig()
 	if config == nil {
+		// Antigravity's binary name ("agy") differs from its tool name, so the
+		// "just return toolName" shortcut would resolve to a non-existent binary
+		// when config load fails. All other built-ins share name and binary.
+		if toolName == "antigravity" {
+			return "agy"
+		}
 		return toolName
 	}
 	switch toolName {
@@ -3538,7 +3544,7 @@ func CreateExampleConfig() error {
 
 # Default AI tool for new sessions
 # When creating a new session (pressing 'n'), this tool will be pre-selected
-# Valid values: "claude", "gemini", "opencode", "codex", "pi", or any custom tool name
+# Valid values: "claude", "gemini", "antigravity", "opencode", "codex", "pi", or any custom tool name
 # Leave commented out or empty to default to shell (no pre-selection)
 # default_tool = "claude"
 

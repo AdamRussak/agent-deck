@@ -38,7 +38,10 @@ func handleAntigravityHook(args []string) {
 	}
 
 	var payload antigravityHookPayload
-	_ = json.Unmarshal(data, &payload)
+	if err := json.Unmarshal(data, &payload); err != nil {
+		fmt.Println(`{"decision":"allow"}`)
+		return
+	}
 
 	sessionID := strings.TrimSpace(payload.ConversationID)
 	status := mapEventToStatus(event)

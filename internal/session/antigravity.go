@@ -2,8 +2,10 @@ package session
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,17 +15,25 @@ import (
 	"time"
 )
 
-var antigravityConfigDirOverride string
+var (
+	antigravityConfigDirOverrideMu sync.RWMutex
+	antigravityConfigDirOverride   string
+)
 
 // SetAntigravityAppDataDirOverrideForTest overrides ~/.gemini/antigravity-cli for tests.
 func SetAntigravityAppDataDirOverrideForTest(dir string) {
+	antigravityConfigDirOverrideMu.Lock()
 	antigravityConfigDirOverride = dir
+	antigravityConfigDirOverrideMu.Unlock()
 }
 
 // GetAntigravityAppDataDir returns ~/.gemini/antigravity-cli
 func GetAntigravityAppDataDir() string {
-	if antigravityConfigDirOverride != "" {
-		return antigravityConfigDirOverride
+	antigravityConfigDirOverrideMu.RLock()
+	override := antigravityConfigDirOverride
+	antigravityConfigDirOverrideMu.RUnlock()
+	if override != "" {
+		return override
 	}
 	return filepath.Join(GetGeminiConfigDir(), "antigravity-cli")
 }
@@ -111,6 +121,9 @@ func parseAntigravityHistoryIndex() []string {
 	var ids []string
 	seen := make(map[string]struct{})
 	scanner := bufio.NewScanner(f)
+	// Same rationale as parseAntigravityLatestUserPrompt: default 64 KiB token
+	// limit would silently truncate large history.jsonl lines.
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -135,6 +148,9 @@ func parseAntigravityHistoryIndex() []string {
 		}
 		seen[id] = struct{}{}
 		ids = append(ids, id)
+	}
+	if err := scanner.Err(); err != nil {
+		sessionLog.Warn("antigravity_history_scan_error", slog.String("error", err.Error()))
 	}
 	return ids
 }
@@ -188,14 +204,19 @@ func GetAvailableAntigravityModels() ([]string, error) {
 	}
 
 	antigravityModelCacheMu.Lock()
-	defer antigravityModelCacheMu.Unlock()
 	if len(antigravityModelCacheList) > 0 && time.Since(antigravityModelCacheTime) < antigravityModelCacheTTL {
 		result := make([]string, len(antigravityModelCacheList))
 		copy(result, antigravityModelCacheList)
+		antigravityModelCacheMu.Unlock()
 		return result, nil
 	}
+	antigravityModelCacheMu.Unlock()
 
-	cmd := exec.Command(GetToolCommand("antigravity"), "models")
+	// Run `agy models` without holding the cache lock — a hung agy must not
+	// block every concurrent caller. 10s is plenty for a local CLI subcommand.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, GetToolCommand("antigravity"), "models")
 	out, err := cmd.Output()
 	if err != nil {
 		return antigravityModelFallback, fmt.Errorf("agy models: %w", err)
@@ -207,7 +228,6 @@ func GetAvailableAntigravityModels() ([]string, error) {
 		if line == "" || strings.HasPrefix(line, "Usage") {
 			continue
 		}
-		// Take first column / token
 		fields := strings.Fields(line)
 		if len(fields) > 0 {
 			models = append(models, fields[0])
@@ -217,8 +237,12 @@ func GetAvailableAntigravityModels() ([]string, error) {
 		return antigravityModelFallback, nil
 	}
 	sort.Strings(models)
+
+	antigravityModelCacheMu.Lock()
 	antigravityModelCacheList = models
 	antigravityModelCacheTime = time.Now()
+	antigravityModelCacheMu.Unlock()
+
 	result := make([]string, len(models))
 	copy(result, models)
 	return result, nil
@@ -226,19 +250,41 @@ func GetAvailableAntigravityModels() ([]string, error) {
 
 // ExtractAntigravityConversationIDFromPane scans tmux pane text for agy resume hint
 func ExtractAntigravityConversationIDFromPane(text string) string {
-	// Resume: agy --conversation=d1d8a55b-cc27-4dd4-bc62-2f73015960d2 (or -c)
-	const prefix = "--conversation="
+	// Resume hints come in two shapes:
+	//   agy --conversation=<uuid>
+	//   agy -c <uuid>          (or -c=<uuid>)
+	trimUUID := func(rest string) string {
+		rest = strings.TrimSpace(rest)
+		rest = strings.Trim(rest, "=)")
+		if end := strings.IndexAny(rest, " \t()"); end > 0 {
+			rest = rest[:end]
+		}
+		return rest
+	}
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
-		if idx := strings.Index(line, prefix); idx >= 0 {
-			rest := line[idx+len(prefix):]
-			rest = strings.TrimSpace(rest)
-			rest = strings.Trim(rest, "=)")
-			if end := strings.IndexAny(rest, " \t("); end > 0 {
-				rest = rest[:end]
+		if idx := strings.Index(line, "--conversation="); idx >= 0 {
+			if id := trimUUID(line[idx+len("--conversation="):]); looksLikeUUID(id) {
+				return id
 			}
-			if looksLikeUUID(rest) {
-				return rest
+		}
+		// Match `-c <uuid>` or `-c=<uuid>` but reject `-cfoo`. Anchor on
+		// a leading space or start-of-line so we don't catch `--cdir` etc.
+		for _, marker := range []string{" -c ", " -c="} {
+			if idx := strings.Index(line, marker); idx >= 0 {
+				if id := trimUUID(line[idx+len(marker):]); looksLikeUUID(id) {
+					return id
+				}
+			}
+		}
+		if strings.HasPrefix(line, "-c ") {
+			if id := trimUUID(line[3:]); looksLikeUUID(id) {
+				return id
+			}
+		}
+		if strings.HasPrefix(line, "-c=") {
+			if id := trimUUID(line[3:]); looksLikeUUID(id) {
+				return id
 			}
 		}
 	}

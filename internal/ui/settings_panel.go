@@ -413,7 +413,12 @@ func (s *SettingsPanel) GetConfig() *session.UserConfig {
 	// Hermes settings
 	config.Hermes.YoloMode = s.hermesYoloMode
 
-	// Antigravity settings
+	// Antigravity settings — preserve the full struct so DefaultModel,
+	// EnvFile, and Command survive a Settings TUI save. Without this, the
+	// panel-managed YoloMode toggle would zero out unrelated fields.
+	if s.originalConfig != nil {
+		config.Antigravity = s.originalConfig.Antigravity
+	}
 	config.Antigravity.YoloMode = s.antigravityYoloMode
 
 	// Update settings

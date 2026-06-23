@@ -6063,10 +6063,6 @@ func (i *Instance) Restart() error {
 	if i.Tool == "gemini" {
 		i.UpdateGeminiSession(nil)
 	}
-
-	if i.Tool == "gemini" {
-		i.UpdateGeminiSession(nil)
-	}
 	if i.Tool == "antigravity" {
 		i.UpdateAntigravitySession()
 	}
@@ -6091,6 +6087,9 @@ func (i *Instance) Restart() error {
 		i.ensureProfileEnv()
 		WriteHookSessionAnchor(i.ID, i.AntigravityConversationID)
 		i.sweepDuplicateToolSessions()
+		// Mirror the Claude respawn path: MCPs may have changed since the
+		// session started, so re-capture them now or LoadedMCPNames goes stale.
+		i.CaptureLoadedMCPs()
 		i.Status = StatusWaiting
 		return nil
 	}

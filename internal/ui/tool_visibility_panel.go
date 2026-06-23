@@ -77,7 +77,7 @@ func (p *ToolVisibilityPanel) LoadConfig(config *session.UserConfig) {
 	names := append([]string{}, pickerToolNames...)
 	if config != nil && len(config.Tools) > 0 {
 		builtins := map[string]bool{
-			"claude": true, "gemini": true, "opencode": true, "codex": true,
+			"claude": true, "gemini": true, "antigravity": true, "opencode": true, "codex": true,
 			"pi": true, "copilot": true, "crush": true, "cursor": true, "hermes": true,
 			"shell": true, "aider": true,
 		}

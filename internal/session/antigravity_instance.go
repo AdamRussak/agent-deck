@@ -212,6 +212,9 @@ func parseAntigravityLatestUserPrompt(conversationID string) string {
 
 	var lastUser string
 	scanner := bufio.NewScanner(f)
+	// Default 64 KiB bufio.Scanner buf truncates large USER_INPUT pastes; raise
+	// to 8 MiB so multi-megabyte prompts don't silently leave lastUser stale.
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {

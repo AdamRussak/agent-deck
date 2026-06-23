@@ -23,7 +23,11 @@ func WriteAntigravityToToolData(td json.RawMessage, inst *Instance) json.RawMess
 	}
 	m := map[string]json.RawMessage{}
 	if len(td) > 0 {
-		_ = json.Unmarshal(td, &m)
+		// Tolerate corrupt or `null` tool_data — start with an empty map rather
+		// than wiping unrelated extras-zone fields on parse failure.
+		if err := json.Unmarshal(td, &m); err != nil || m == nil {
+			m = map[string]json.RawMessage{}
+		}
 	}
 
 	merge := func(key string, value any) {
@@ -48,7 +52,10 @@ func WriteAntigravityToToolData(td json.RawMessage, inst *Instance) json.RawMess
 				return
 			}
 		}
-		raw, _ := json.Marshal(value)
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return
+		}
 		m[key] = raw
 	}
 
@@ -61,7 +68,10 @@ func WriteAntigravityToToolData(td json.RawMessage, inst *Instance) json.RawMess
 	merge("antigravity_yolo_mode", inst.AntigravityYoloMode)
 	merge("antigravity_model", inst.AntigravityModel)
 
-	out, _ := json.Marshal(m)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return td
+	}
 	return out
 }
 

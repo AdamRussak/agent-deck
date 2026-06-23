@@ -111,11 +111,21 @@ func TestAntigravityConversationHasData(t *testing.T) {
 }
 
 func TestExtractAntigravityConversationIDFromPane(t *testing.T) {
-	text := "Thanks for using agy\nResume: agy --conversation=d1d8a55b-cc27-4dd4-bc62-2f73015960d2 (or -c)\n"
-	got := ExtractAntigravityConversationIDFromPane(text)
-	want := "d1d8a55b-cc27-4dd4-bc62-2f73015960d2"
-	if got != want {
-		t.Fatalf("got %q want %q", got, want)
+	const uuid = "d1d8a55b-cc27-4dd4-bc62-2f73015960d2"
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"long form", "Thanks for using agy\nResume: agy --conversation=" + uuid + " (or -c)\n"},
+		{"short -c space", "Resume: agy -c " + uuid + "\n"},
+		{"short -c=", "Resume: agy -c=" + uuid + "\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ExtractAntigravityConversationIDFromPane(tc.text); got != uuid {
+				t.Fatalf("got %q want %q", got, uuid)
+			}
+		})
 	}
 }
 
